@@ -150,7 +150,7 @@ namespace DataLinkNetwork3.BitArrayRoutine
                     {
                         ones = 0;
                     }
-                    
+
                     if (ones == 5)
                     {
                         ones = 0;
@@ -159,7 +159,7 @@ namespace DataLinkNetwork3.BitArrayRoutine
 
                     result[position++] = data[i];
                 }
-                
+
                 return result;
             }
 
@@ -185,14 +185,25 @@ namespace DataLinkNetwork3.BitArrayRoutine
             return parts;
         }
 
-        public static BitArrayReader Reader(this BitArray bitArray)
+        public static BitArrayReader Reader(this BitArray bitArray, int position = 0)
         {
-            return new(bitArray);
+            return new(bitArray, position);
+        }
+
+        public static BitArrayWriter Writer(this BitArray bitArray, int position = 0)
+        {
+            return new(bitArray, position);
+        }
+
+        public static BitArray Write(this BitArray array, int offset, byte value)
+        {
+            array.Writer(offset).Write(new BitArray(new[] {value}));
+            return array;
         }
         
-        public static BitArrayWriter Writer(this BitArray bitArray)
+        public static byte Read(this BitArray array, int offset = 0)
         {
-            return new(bitArray);
+            return array.Reader(offset).Read(8).ToByteArray()[0];
         }
     }
 }

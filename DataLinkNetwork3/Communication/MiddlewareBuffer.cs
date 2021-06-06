@@ -7,13 +7,16 @@ namespace DataLinkNetwork3.Communication
     public class MiddlewareBuffer
     {
         private readonly Queue<BitArray> _dataQueue;
-        private int _lastReceiveStatusCode;
+
+        private ResponseStatus _responseStatus;
+
+        private int _srejCount = 0;
 
         private readonly Mutex _acquireMutex;
 
         public MiddlewareBuffer()
         {
-            _acquireMutex = new(false);
+            _acquireMutex = new();
             _dataQueue = new Queue<BitArray>();
         }
 
@@ -26,7 +29,7 @@ namespace DataLinkNetwork3.Communication
         {
             _acquireMutex.WaitOne();
         }
-        
+
         public void Release()
         {
             _acquireMutex.ReleaseMutex();
@@ -37,25 +40,35 @@ namespace DataLinkNetwork3.Communication
             var bitArray = _dataQueue.Dequeue();
             return bitArray;
         }
-        
+
         public void Push(BitArray data)
         {
             _dataQueue.Enqueue(data);
         }
 
-        public void SetStatusCode(int statusCode)
+        public void SetResponseStatus(ResponseStatus responseStatus)
         {
-            _lastReceiveStatusCode = statusCode;
-        }
-        
-        public int GetStatusCode()
-        {
-            return _lastReceiveStatusCode;
+            _responseStatus = responseStatus;
         }
 
-        public void ResetStatus()
+        public void SetSrejCount(int count)
         {
-            _lastReceiveStatusCode = 0;
+            _srejCount = count;
+        }
+        
+        public int GetSrejCount()
+        {
+            return _srejCount;
+        }
+
+        public ResponseStatus GetResponseStatus()
+        {
+            return _responseStatus;
+        }
+
+        public void ResetResponseStatus()
+        {
+            _responseStatus = ResponseStatus.Undefined;
         }
     }
 }

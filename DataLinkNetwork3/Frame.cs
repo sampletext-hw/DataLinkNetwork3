@@ -42,6 +42,13 @@ namespace DataLinkNetwork3
             Control = control;
         }
 
+        public byte Id => Control.Read();
+        
+        public byte ControlFlag => Control.Read(8);
+
+        public bool IsStart => ControlFlag == 1;
+        public bool IsEnd => ControlFlag == 2;
+
         public BitArray Build()
         {
             Checksum = new VerticalOddityChecksumBuilder().Build(Data);
@@ -56,7 +63,7 @@ namespace DataLinkNetwork3
 
             BitArray frameArray = new BitArray(frameSize);
 
-            var writer = new BitArrayWriter(frameArray);
+            var writer = frameArray.Writer();
 
             writer.Write(Flag);
             writer.Write(Address);
@@ -66,6 +73,16 @@ namespace DataLinkNetwork3
             writer.Write(Flag);
 
             return frameArray;
+        }
+
+        public static BitArray BuildFirstFrame()
+        {
+            return new Frame(new BitArray(0), new BitArray(C.AddressSize), new BitArray(C.ControlSize).Write(8, 1)).Build();
+        }
+        
+        public static BitArray BuildEndFrame()
+        {
+            return new Frame(new BitArray(0), new BitArray(C.AddressSize), new BitArray(C.ControlSize).Write(8, 2)).Build();
         }
 
         public static Frame Parse(BitArray rawBits)
@@ -85,7 +102,7 @@ namespace DataLinkNetwork3
                 throw new ArgumentException($"{nameof(rawBits)} doesn't contain second Flag");
             }
 
-            BitArrayReader reader = new BitArrayReader(rawBits, startFlagPosition);
+            BitArrayReader reader = rawBits.Reader(startFlagPosition);
 
             reader.Read(C.FlagSize);
             var addressBits = reader.Read(C.AddressSize);
@@ -97,7 +114,7 @@ namespace DataLinkNetwork3
             var checksumBits = reader.Read(C.ChecksumSize);
             reader.Adjust(-C.ChecksumSize - checksumStartPosition + currentReaderPosition);
             var dataBits = reader.Read(checksumStartPosition - currentReaderPosition);
-            
+
             return new Frame(dataBits, addressBits, controlBits) {Checksum = checksumBits};
         }
 

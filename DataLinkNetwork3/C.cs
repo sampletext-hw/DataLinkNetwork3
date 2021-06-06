@@ -6,6 +6,7 @@
         public const int FlagSize = 8;
         public const int AddressSize = 8;
         public const int ControlSize = 16;
+        public const int WindowSize = 5;
 
         public const int MaxFrameDataSize = 64;
 

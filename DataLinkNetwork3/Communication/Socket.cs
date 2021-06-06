@@ -47,7 +47,7 @@ namespace DataLinkNetwork3.Communication
         // Flag, indicating, whether we should terminate background tasks
         private volatile bool _terminate;
 
-        public Socket(string title = "Socket Unnamed")
+        public Socket(string title = "Socket")
         {
             _title = title;
             _connectedMutex = new();
@@ -77,116 +77,173 @@ namespace DataLinkNetwork3.Communication
         /// <summary>
         /// Single Packet Send 
         /// </summary>
-        /// <param name="array">Packet Data Array</param>
-        private bool PerformSend(byte[] array)
+        /// <param name="dataArray">Packet Data Array</param>
+        private bool PerformSend(byte[] dataArray)
         {
-            // BitStaff all data and split to frame size
-            var data = new BitArray(array).BitStaff();
+            _sendBuffer.Acquire();
+            _sendBuffer.Push(Frame.BuildFirstFrame());
+            _sendBuffer.Release();
 
-            var arrays = data.Split(C.MaxFrameDataSize);
-
-            for (var index = 0; index < arrays.Count; index++)
+            while (AwaitResponse() != ResponseStatus.RR)
             {
-                var dataBits = arrays[index];
-                var addressBits = new BitArray(C.AddressSize);
-                var controlBits = new BitArray(C.ControlSize);
-               
-                // First byte is a frame id, second is control flag
-                var controlBytes = new byte[] {(byte)(index & 0xFF), 0};
-                controlBits.Writer().Write(new BitArray(controlBytes));
+                Console.WriteLine($"{_title}: Waiting for receiver");
+                Thread.Sleep(10);
+            }
 
-                var frame = new Frame(dataBits, addressBits, controlBits);
+            Console.WriteLine($"{_title}: Receiver Ready");
 
-                var bitArray = frame.Build();
+            _sendBuffer.ResetResponseStatus();
 
-                var result = InternalSendFrame(bitArray, 0);
-                if (!result)
+            // BitStaff all data and split to frame size
+            var dataBitArray = new BitArray(dataArray).BitStaff();
+
+            var arrays = dataBitArray.Split(C.MaxFrameDataSize);
+
+            var taken = 0;
+
+            var windowedBitArrays = new List<BitArray>();
+
+            var srejCount = 0;
+
+            var index = 0;
+
+            RESTART:
+            while (taken < arrays.Count)
+            {
+                if (srejCount == 0)
                 {
-                    return false;
+                    windowedBitArrays.Clear();
                 }
                 else
                 {
-                    Console.WriteLine($"{_title}: Sent frame {index} / {arrays.Count}");
+                    while (windowedBitArrays.Count > srejCount)
+                    {
+                        windowedBitArrays.RemoveAt(0);
+                    }
+
+                    srejCount = 0;
+                    _sendBuffer.SetSrejCount(0);
+                }
+
+                while (windowedBitArrays.Count < C.WindowSize && taken < arrays.Count)
+                {
+                    windowedBitArrays.Add(arrays[taken++]);
+                }
+
+                Console.WriteLine($"{_title}: Filled window");
+
+                bool sendSuccessful = false;
+
+                while (!sendSuccessful)
+                {
+                    _sendBuffer.Acquire();
+                    for (int i = 0; i < windowedBitArrays.Count; i++)
+                    {
+                        var dataBits = windowedBitArrays[i];
+
+                        var addressBits = new BitArray(C.AddressSize);
+                        var controlBits = new BitArray(C.ControlSize);
+
+                        // First byte is a frame id, second is control flag
+                        var controlBytes = new byte[] {(byte)(index++ % 8), 0};
+                        controlBits.Writer().Write(new BitArray(controlBytes));
+
+                        var frame = new Frame(dataBits, addressBits, controlBits);
+
+                        var frameBits = frame.Build();
+
+                        _sendBuffer.Push(frameBits);
+                    }
+
+                    _sendBuffer.ResetResponseStatus();
+                    _sendBuffer.Release();
+
+                    var responseStatus = AwaitResponse();
+
+                    switch (responseStatus)
+                    {
+                        case ResponseStatus.Undefined:
+                        {
+                            // Something went wrong
+                            sendSuccessful = false;
+                            break;
+                        }
+                        case ResponseStatus.RR:
+                        {
+                            sendSuccessful = true;
+                            break;
+                        }
+                        case ResponseStatus.RNR:
+                        {
+                            Console.WriteLine($"{_title}: Received RNR, Waiting");
+                            while (AwaitResponse() != ResponseStatus.RR)
+                            {
+                                Thread.Sleep(10);
+                            }
+
+                            Console.WriteLine($"{_title}: Received RR, Continuing");
+                            sendSuccessful = true;
+                            break;
+                        }
+                        case ResponseStatus.REJ:
+                        {
+                            Console.WriteLine($"{_title}: Received REJ, RESTART");
+                            sendSuccessful = false;
+                            goto RESTART;
+                        }
+                        case ResponseStatus.SREJ:
+                        {
+                            Console.WriteLine($"{_title}: Received SREJ, RESTART");
+                            srejCount = _sendBuffer.GetSrejCount();
+                            sendSuccessful = true;
+                            goto RESTART;
+                        }
+                        default:
+                        {
+                            Console.WriteLine($"{_title}: ResponseStatus Unknown");
+                            break;
+                        }
+                    }
+
+                    _sendBuffer.ResetResponseStatus();
                 }
             }
 
-            // Send End Control Frame
-            return InternalSendEnd();
-        }
-
-        /// <summary>
-        /// Small util method, which sends frame with end (0x11) control bits
-        /// </summary>
-        private bool InternalSendEnd()
-        {
-            //Console.WriteLine("InternalSendEnd");
-            var endAddressBits = new BitArray(C.AddressSize);
-            var endControlBits = new BitArray(C.ControlSize);
-            var endControlBitsWriter = new BitArrayWriter(endControlBits);
-            endControlBitsWriter.Write(new BitArray(new byte[] {0, 0x11}));
-            var endFrame = new Frame(new BitArray(0), endAddressBits, endControlBits);
-
-            var endFrameBits = endFrame.Build();
-
-            return InternalSendFrame(endFrameBits, 0);
-        }
-
-        /// <summary>
-        /// Recursive method, which attempts to send an encoded frame for 3 times
-        /// </summary>
-        /// <param name="frameBits">Encoded (Built) Frame</param>
-        /// <param name="tried">Amount of tries, should be 0 for first invocation</param>
-        /// <returns>Result of a send (either true or false)</returns>
-        private bool InternalSendFrame(BitArray frameBits, int tried)
-        {
             _sendBuffer.Acquire();
-            _sendBuffer.Push(frameBits);
+            _sendBuffer.Push(Frame.BuildEndFrame());
             _sendBuffer.Release();
 
-            var lastReceiveStatus = AwaitStatusCode();
-
-            if (lastReceiveStatus == 1)
+            while (AwaitResponse() != ResponseStatus.RR)
             {
-                // Everything is OK
-                _sendBuffer.ResetStatus();
-                return true;
-            }
-            else if (lastReceiveStatus == -1)
-            {
-                // Receiver returned a failed flag, retry send
-                _sendBuffer.ResetStatus();
-                if (tried == 3)
-                {
-                    return false;
-                }
-
-                // Recursively send this frame again
-                var result = InternalSendFrame(frameBits, tried + 1);
-                return result;
+                Console.WriteLine($"{_title}: Waiting for end confirmation");
+                Thread.Sleep(10);
             }
 
-            return false;
+            Console.WriteLine($"{_title}: End confirmation received");
+
+            return true;
         }
 
         /// <summary>
         /// Small utility for awaiting a status code from receiver
         /// </summary>
         /// <returns>Status code from receiver</returns>
-        private int AwaitStatusCode()
+        private ResponseStatus AwaitResponse()
         {
             var stopwatch = Stopwatch.StartNew();
 
-            var lastReceiveStatus = 0;
+            var lastReceiveStatus = ResponseStatus.Undefined;
 
-            while (lastReceiveStatus == 0)
+            while (lastReceiveStatus == ResponseStatus.Undefined)
             {
-                lastReceiveStatus = _sendBuffer.GetStatusCode();
-                if (lastReceiveStatus == 0)
+                lastReceiveStatus = _sendBuffer.GetResponseStatus();
+
+                if (lastReceiveStatus == ResponseStatus.Undefined)
                 {
                     if (stopwatch.ElapsedMilliseconds > C.SendTimeoutMilliseconds)
                     {
                         stopwatch.Stop();
-                        lastReceiveStatus = -1;
+                        lastReceiveStatus = ResponseStatus.REJ;
                         break;
                     }
 
@@ -231,92 +288,103 @@ namespace DataLinkNetwork3.Communication
         {
             // Don't allow a disconnection, while receive is in progress
             _connectedMutex.WaitOne();
-            var framedBytes = new Dictionary<int, byte[]>();
 
-            var lastReceived = -1;
+            #region FirstFrame
 
-            var receivedEnd = false;
+            _receiveBuffer.Acquire();
 
-            var idLoop = 0;
+            var firstFrameBitArray = _receiveBuffer.Get();
 
-            var totalReceived = 0;
+            var firstFrame = Frame.Parse(firstFrameBitArray);
 
-            // It's actually changing inside, dumb Resharper!
-            // ReSharper disable once ConditionIsAlwaysTrueOrFalse
-            while (!receivedEnd)
+            if (firstFrame.IsStart)
             {
-                // If for some reason, there is no data, but we didn't receive an end frame, wait for data
-                while (!_receiveBuffer.HasAvailable())
-                {
-                    Thread.Sleep(10);
-                }
-                
-                // Receive and parse a frame
-                var bitArray = InternalReceiveFrame();
-                var frame = Frame.Parse(bitArray);
-                
-                // Read and process control bits
-                var controlBytes = frame.Control.Reader().Read(16).ToByteArray();
-                var frameId = controlBytes[0];
-                receivedEnd = controlBytes[1] == 0x11;
+                // Set ReceiverNotReady for some time
+                _receiveBuffer.SetResponseStatus(ResponseStatus.RNR);
+            }
+            else
+            {
+                _receiveBuffer.SetResponseStatus(ResponseStatus.REJ);
+            }
 
-                // If this is a End Frame - break
-                if (receivedEnd)
+            _receiveBuffer.Release();
+
+            Thread.Sleep(50);
+            _receiveBuffer.SetResponseStatus(ResponseStatus.RR);
+
+            #endregion
+
+            List<byte[]> data = new List<byte[]>();
+
+            bool shouldContinue = true;
+            while (shouldContinue)
+            {
+                _receiveBuffer.Acquire();
+
+                List<BitArray> bufferedBitArrays = new List<BitArray>();
+                while (_receiveBuffer.HasAvailable())
                 {
-                    _receiveBuffer.SetStatusCode(1);
-                    break;
-                }
-                
-                // (loop id over 255)
-                if (lastReceived == byte.MaxValue)
-                {
-                    lastReceived = 0;
-                    idLoop++;
+                    bufferedBitArrays.Add(_receiveBuffer.Get());
                 }
 
-                if (frameId <= lastReceived)
-                {
-                    totalReceived++;
-                    Console.WriteLine($"{_title}: Received {totalReceived} frame");
-                    _receiveBuffer.SetStatusCode(1);
-                }
-                else
-                {
-                    lastReceived = frameId;
+                _receiveBuffer.Release();
 
-                    // Check for checksum integrity
-                    
-                    var checksum = new VerticalOddityChecksumBuilder().Build(frame.Data);
-                    if (frame.Checksum.IsSameNoCopy(checksum, 0, 0, C.ChecksumSize))
+                for (var i = 0; i < bufferedBitArrays.Count; i++)
+                {
+                    try
                     {
-                        _receiveBuffer.SetStatusCode(1);
-                        framedBytes.Add(idLoop * byte.MaxValue + frameId, frame.Data.DeBitStaff().ToByteArray());
+                        var frame = Frame.Parse(bufferedBitArrays[i]);
+
+                        if (frame.IsEnd)
+                        {
+                            // This is an end frame
+                            shouldContinue = false;
+                            _receiveBuffer.SetResponseStatus(ResponseStatus.RR);
+                            break;
+                        }
+
+                        Random random = new Random(DateTime.Now.Millisecond);
+
+                        if (random.Next(0, 1000) > 800)
+                        {
+                            // 1/5 is RNR)
+
+                            _receiveBuffer.SetResponseStatus(ResponseStatus.RNR);
+                            Thread.Sleep(100);
+                            _receiveBuffer.SetResponseStatus(ResponseStatus.RR);
+                            break;
+                        }
+                        else if (random.Next(0, 1000) > 950)
+                        {
+                            // 5% collision
+                            // invert one bit
+                            bufferedBitArrays[i][random.Next(0, bufferedBitArrays[i].Length)] ^= true;
+                        }
+
+                        var dataChecksum = new VerticalOddityChecksumBuilder().Build(frame.Data);
+                        var receivedChecksum = frame.Checksum;
+                        if (receivedChecksum.IsSameNoCopy(dataChecksum, 0, 0, C.ChecksumSize))
+                        {
+                            data.Add(frame.Data.DeBitStaff().ToByteArray());
+                            _receiveBuffer.SetResponseStatus(ResponseStatus.RR);
+                        }
+                        else
+                        {
+                            _receiveBuffer.SetSrejCount(bufferedBitArrays.Count - i);
+                            _receiveBuffer.SetResponseStatus(ResponseStatus.SREJ);
+                            break;
+                        }
                     }
-                    else
+                    catch (ArgumentException)
                     {
-                        _receiveBuffer.SetStatusCode(-1);
+                        _receiveBuffer.SetSrejCount(bufferedBitArrays.Count);
+                        _receiveBuffer.SetResponseStatus(ResponseStatus.REJ);
                     }
                 }
             }
 
-            var total = framedBytes.OrderBy(f => f.Key).SelectMany(b => b.Value).ToList();
-
-            // Release connection locker, so a disconnect can be performed
             _connectedMutex.ReleaseMutex();
-            return total.ToArray();
-        }
-
-        /// <summary>
-        /// Small utility, to receive a single frame from _receiveBuffer
-        /// </summary>
-        /// <returns>Frame Bits</returns>
-        private BitArray InternalReceiveFrame()
-        {
-            _receiveBuffer.Acquire();
-            var bitArray = _receiveBuffer.Get();
-            _receiveBuffer.Release();
-
-            return bitArray;
+            return data.SelectMany(t => t).ToArray();
         }
 
         /// <summary>
@@ -412,7 +480,6 @@ namespace DataLinkNetwork3.Communication
             _pairedSocket = null;
 
             _terminate = true;
-            _sendBarrier.Set();
 
             Disconnected?.Invoke();
             _connectedMutex.ReleaseMutex();
