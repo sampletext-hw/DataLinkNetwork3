@@ -1,6 +1,6 @@
 ﻿using System.Collections;
 
-namespace DataLinkNetwork2.BitArrayRoutine
+namespace DataLinkNetwork3.BitArrayRoutine
 {
     public class BitArrayWriter
     {

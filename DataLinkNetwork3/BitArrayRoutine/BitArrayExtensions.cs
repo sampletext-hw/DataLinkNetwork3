@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace DataLinkNetwork2.BitArrayRoutine
+namespace DataLinkNetwork3.BitArrayRoutine
 {
     public static class BitArrayExtensions
     {
@@ -68,6 +68,10 @@ namespace DataLinkNetwork2.BitArrayRoutine
                 if (data[i])
                 {
                     ones++;
+                }
+                else
+                {
+                    ones = 0;
                 }
 
                 if (ones == 5)
@@ -136,22 +140,26 @@ namespace DataLinkNetwork2.BitArrayRoutine
                 BitArray result = new BitArray(data.Length - extraBits);
 
                 int position = 0;
-                for (var i = 0; i < data.Length; i++)
+                for (var i = 0; i < data.Count; i++)
                 {
                     if (data[i])
                     {
                         ones++;
                     }
-
+                    else
+                    {
+                        ones = 0;
+                    }
+                    
                     if (ones == 5)
                     {
-                        position++;
                         ones = 0;
+                        continue;
                     }
 
                     result[position++] = data[i];
                 }
-
+                
                 return result;
             }
 

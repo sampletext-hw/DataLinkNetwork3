@@ -1,6 +1,6 @@
 ﻿using System.Collections;
 
-namespace DataLinkNetwork2.Abstractions
+namespace DataLinkNetwork3.Abstractions
 {
     public interface IChecksumBuilder
     {

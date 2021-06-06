@@ -4,17 +4,19 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
-using DataLinkNetwork2.Abstractions;
-using DataLinkNetwork2.BitArrayRoutine;
-using DataLinkNetwork2.Checksum;
+using DataLinkNetwork3.Abstractions;
+using DataLinkNetwork3.BitArrayRoutine;
+using DataLinkNetwork3.Checksum;
 
-namespace DataLinkNetwork2.Communication
+namespace DataLinkNetwork3.Communication
 {
     public class Socket : ISocket
     {
         // Two buffers for data transmition
         private MiddlewareBuffer _sendBuffer;
         private MiddlewareBuffer _receiveBuffer;
+
+        private string _title;
 
         // Paired Socket
         private ISocket _pairedSocket;
@@ -45,8 +47,9 @@ namespace DataLinkNetwork2.Communication
         // Flag, indicating, whether we should terminate background tasks
         private volatile bool _terminate;
 
-        public Socket()
+        public Socket(string title = "Socket Unnamed")
         {
+            _title = title;
             _connectedMutex = new();
             _sendBarrier = new(false);
             _sendQueue = new();
@@ -100,6 +103,10 @@ namespace DataLinkNetwork2.Communication
                 if (!result)
                 {
                     return false;
+                }
+                else
+                {
+                    Console.WriteLine($"{_title}: Sent frame {index} / {arrays.Count}");
                 }
             }
 
@@ -230,6 +237,10 @@ namespace DataLinkNetwork2.Communication
 
             var receivedEnd = false;
 
+            var idLoop = 0;
+
+            var totalReceived = 0;
+
             // It's actually changing inside, dumb Resharper!
             // ReSharper disable once ConditionIsAlwaysTrueOrFalse
             while (!receivedEnd)
@@ -255,10 +266,18 @@ namespace DataLinkNetwork2.Communication
                     _receiveBuffer.SetStatusCode(1);
                     break;
                 }
-
-                // If frame was not yet received, and it's id is not maxed (loop id over 255)
-                if (lastReceived != byte.MaxValue && frameId <= lastReceived)
+                
+                // (loop id over 255)
+                if (lastReceived == byte.MaxValue)
                 {
+                    lastReceived = 0;
+                    idLoop++;
+                }
+
+                if (frameId <= lastReceived)
+                {
+                    totalReceived++;
+                    Console.WriteLine($"{_title}: Received {totalReceived} frame");
                     _receiveBuffer.SetStatusCode(1);
                 }
                 else
@@ -271,7 +290,7 @@ namespace DataLinkNetwork2.Communication
                     if (frame.Checksum.IsSameNoCopy(checksum, 0, 0, C.ChecksumSize))
                     {
                         _receiveBuffer.SetStatusCode(1);
-                        framedBytes.Add(frameId, frame.Data.DeBitStaff().ToByteArray());
+                        framedBytes.Add(idLoop * byte.MaxValue + frameId, frame.Data.DeBitStaff().ToByteArray());
                     }
                     else
                     {
@@ -350,6 +369,7 @@ namespace DataLinkNetwork2.Communication
                 _pairedSocket.AcceptDisconnect();
                 _connected = false;
                 _terminate = true;
+                _sendBarrier.Set();
                 Disconnected?.Invoke();
                 _connectedMutex.ReleaseMutex();
             }
@@ -392,6 +412,7 @@ namespace DataLinkNetwork2.Communication
             _pairedSocket = null;
 
             _terminate = true;
+            _sendBarrier.Set();
 
             Disconnected?.Invoke();
             _connectedMutex.ReleaseMutex();

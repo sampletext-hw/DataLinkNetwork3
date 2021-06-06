@@ -1,7 +1,7 @@
 ﻿using System;
-using DataLinkNetwork2.Communication;
+using DataLinkNetwork3.Communication;
 
-namespace DataLinkNetwork2.Abstractions
+namespace DataLinkNetwork3.Abstractions
 {
     public interface ISocket
     {

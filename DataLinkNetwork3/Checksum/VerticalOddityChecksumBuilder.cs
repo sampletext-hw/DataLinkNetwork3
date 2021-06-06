@@ -1,9 +1,9 @@
 ﻿using System.Collections;
 using System.Linq;
-using DataLinkNetwork2.Abstractions;
-using DataLinkNetwork2.BitArrayRoutine;
+using DataLinkNetwork3.Abstractions;
+using DataLinkNetwork3.BitArrayRoutine;
 
-namespace DataLinkNetwork2.Checksum
+namespace DataLinkNetwork3.Checksum
 {
     public class VerticalOddityChecksumBuilder : IChecksumBuilder
     {
