@@ -46,8 +46,10 @@ namespace DataLinkNetwork3
         
         public byte ControlFlag => Control.Read(8);
 
-        public bool IsStart => ControlFlag == 1;
-        public bool IsEnd => ControlFlag == 2;
+
+        public bool IsStart => ControlFlag >> 1 == 1;
+        public bool IsEnd => ControlFlag >> 2 == 1;
+        public bool IsControl => ControlFlag >> 3 == 1;
 
         public BitArray Build()
         {
@@ -78,6 +80,11 @@ namespace DataLinkNetwork3
         public static BitArray BuildFirstFrame()
         {
             return new Frame(new BitArray(0), new BitArray(C.AddressSize), new BitArray(C.ControlSize).Write(8, 1)).Build();
+        }
+
+        public static BitArray BuildControlFrame(BitArray data)
+        {
+            return new Frame(data, new BitArray(C.AddressSize), new BitArray(C.ControlSize).Write(8, 1 << 3)).Build();
         }
         
         public static BitArray BuildEndFrame()

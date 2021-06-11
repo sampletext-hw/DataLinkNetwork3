@@ -107,7 +107,6 @@ namespace DataLinkNetwork3.Communication
 
             var index = 0;
 
-            RESTART:
             while (taken < arrays.Count)
             {
                 if (srejCount == 0)
@@ -137,6 +136,7 @@ namespace DataLinkNetwork3.Communication
                 while (!sendSuccessful)
                 {
                     _sendBuffer.Acquire();
+                    _sendBuffer.ResetResponseStatus();
                     for (int i = 0; i < windowedBitArrays.Count; i++)
                     {
                         var dataBits = windowedBitArrays[i];
@@ -155,7 +155,17 @@ namespace DataLinkNetwork3.Communication
                         _sendBuffer.Push(frameBits);
                     }
 
-                    _sendBuffer.ResetResponseStatus();
+                    BitArray resultingChecksum = new BitArray(C.ChecksumSize);
+                    for (int i = 0; i < windowedBitArrays.Count; i++)
+                    {
+                        var dataBits = windowedBitArrays[i];
+                        var checksumBuilder = new VerticalOddityChecksumBuilder();
+
+                        var checksum = checksumBuilder.Build(dataBits);
+                        resultingChecksum.Xor(checksum);
+                    }
+
+                    _sendBuffer.Push(Frame.BuildControlFrame(resultingChecksum));
                     _sendBuffer.Release();
 
                     var responseStatus = AwaitResponse();
@@ -187,16 +197,14 @@ namespace DataLinkNetwork3.Communication
                         }
                         case ResponseStatus.REJ:
                         {
-                            Console.WriteLine($"{_title}: Received REJ, RESTART");
                             sendSuccessful = false;
-                            goto RESTART;
+                            break;
                         }
                         case ResponseStatus.SREJ:
                         {
-                            Console.WriteLine($"{_title}: Received SREJ, RESTART");
                             srejCount = _sendBuffer.GetSrejCount();
                             sendSuccessful = true;
-                            goto RESTART;
+                            break;
                         }
                         default:
                         {
@@ -329,11 +337,16 @@ namespace DataLinkNetwork3.Communication
 
                 _receiveBuffer.Release();
 
+                BitArray resultingChecksum = new BitArray(C.ChecksumSize);
+                var checksumBuilder = new VerticalOddityChecksumBuilder();
+
+                bool success = true;
                 for (var i = 0; i < bufferedBitArrays.Count; i++)
                 {
                     try
                     {
                         var frame = Frame.Parse(bufferedBitArrays[i]);
+                        resultingChecksum.Xor(checksumBuilder.Build(frame.Data));
 
                         if (frame.IsEnd)
                         {
@@ -341,6 +354,20 @@ namespace DataLinkNetwork3.Communication
                             shouldContinue = false;
                             _receiveBuffer.SetResponseStatus(ResponseStatus.RR);
                             break;
+                        }
+                        else if (frame.IsControl)
+                        {
+                            var controlChecksum = frame.Data;
+                            if (resultingChecksum.IsSameNoCopy(controlChecksum, 0, 0, C.ChecksumSize))
+                            {
+                                // Everything is fine
+                                break;
+                            }
+                            else
+                            {
+                                _receiveBuffer.SetResponseStatus(ResponseStatus.REJ);
+                                break;
+                            }
                         }
 
                         Random random = new Random(DateTime.Now.Millisecond);
@@ -352,6 +379,7 @@ namespace DataLinkNetwork3.Communication
                             _receiveBuffer.SetResponseStatus(ResponseStatus.RNR);
                             Thread.Sleep(100);
                             _receiveBuffer.SetResponseStatus(ResponseStatus.RR);
+                            Thread.Sleep(100);
                             break;
                         }
                         else if (random.Next(0, 1000) > 950)
